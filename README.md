@@ -58,4 +58,4 @@ SLURM logs: `outputs/logs/`.
 - EPISURG MRI is not in git (data-use agreement). Keep it under `data/EPISURG_sample/` locally.
 - Cite Simpson et al., Imaging Neuroscience 2025 (`IMAG.a.147`) if you use RAMPS.
 
-Paper notes: [`autoLesion.md`](autoLesion.md)
+Paper notes: [`autoLesion.md`](autoLesion.md) · Pipeline theory: [`AutoResection.md`](AutoResection.md) ([docx](AutoResection.docx))

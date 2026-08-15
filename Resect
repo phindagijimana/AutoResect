@@ -1,0 +1,268 @@
+#!/usr/bin/env bash
+# Resect — CLI for the RAMPS preoperative resection-mask pipeline.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV="$ROOT/env"
+LOG_DIR="$ROOT/outputs/logs"
+STATE="$ROOT/outputs/.last_run"
+JOBID_FILE="$ROOT/outputs/.last_jobid"
+RAMP_PY="$ROOT/RAMPS/RAMP.py"
+REQ="$ROOT/RAMPS/requirements-linux.txt"
+
+DEFAULT_FS="${FREESURFER_HOME:-$HOME/Documents/others/data_mining/freesurfer}"
+# Fall back to the known lab install if present
+if [[ ! -d "$DEFAULT_FS" && -d "$HOME/Documents/others/data_mining/freesurfer" ]]; then
+  DEFAULT_FS="$HOME/Documents/others/data_mining/freesurfer"
+fi
+if [[ ! -d "$DEFAULT_FS" && -d /mnt/nfs/home/urmc-sh.rochester.edu/pndagiji/Documents/others/data_mining/freesurfer ]]; then
+  DEFAULT_FS=/mnt/nfs/home/urmc-sh.rochester.edu/pndagiji/Documents/others/data_mining/freesurfer
+fi
+
+SAMPLE_PRE="$ROOT/data/EPISURG_sample/EPISURG/subjects/sub-0316/preop/sub-0316_preop-t1mri-1.nii.gz"
+SAMPLE_POST="$ROOT/data/EPISURG_sample/EPISURG/subjects/sub-0316/postop/sub-0316_postop-t1mri-1.nii.gz"
+
+usage() {
+  cat <<'EOF'
+Usage: ./Resect <command> [options]
+
+Commands:
+  install     Create the Python env and check FreeSurfer
+  start       Submit (or run) RAMPS on a pre/post T1 pair
+  logs        Show the latest job logs
+  status      Show the last job / SLURM state
+
+Start options:
+  --pre PATH          Pre-operative T1 (.nii.gz)
+  --post PATH         Post-operative T1 (.nii.gz)
+  --id NAME           Subject / output prefix (default: sub-0316)
+  --hemi L|R          Hemisphere of resection (default: R)
+  --lobe T|F|O|P...   Lobe codes, combinable (default: TF)
+  --partition NAME    SLURM partition (default: interactive)
+  --local             Run in the foreground instead of sbatch
+
+Examples:
+  ./Resect install
+  ./Resect start
+  ./Resect start --pre pre.nii.gz --post post.nii.gz --id sub-001 --hemi L --lobe T
+  ./Resect logs
+  ./Resect logs -f
+EOF
+}
+
+die() { echo "error: $*" >&2; exit 1; }
+
+ensure_dirs() {
+  mkdir -p "$LOG_DIR" "$ROOT/outputs" "$ROOT/.pip-tmp"
+}
+
+cmd_install() {
+  ensure_dirs
+  export TMPDIR="${TMPDIR:-$ROOT/.pip-tmp}"
+  command -v python3.9 >/dev/null || die "python3.9 not found"
+  python3.9 -m venv "$ENV"
+  "$ENV/bin/python" -m pip install --upgrade pip wheel
+  if [[ -f "$REQ" ]]; then
+    # Linux extras (no tensorflow-macos). Ignore surfa/torch; FreeSurfer provides those.
+    "$ENV/bin/python" -m pip install \
+      "numpy==1.23.5" \
+      "antspyx==0.5.4" \
+      "nibabel==5.0.1" \
+      "pandas==2.0.3" \
+      "scipy==1.10.1"
+  else
+    die "missing $REQ"
+  fi
+  "$ENV/bin/python" -c "import ants,nibabel,pandas,scipy; print('ants', ants.__version__)"
+
+  local fs="${FREESURFER_HOME:-$DEFAULT_FS}"
+  if [[ -x "$fs/SetUpFreeSurfer.sh" || -f "$fs/SetUpFreeSurfer.sh" ]]; then
+    echo "FreeSurfer: $fs"
+  else
+    echo "warning: FreeSurfer not found at $fs"
+    echo "  export FREESURFER_HOME=/path/to/freesurfer"
+  fi
+  local lic="${FS_LICENSE:-$HOME/.freesurfer/license.txt}"
+  if [[ -f "$lic" ]]; then
+    echo "FS license: $lic"
+  else
+    echo "warning: FreeSurfer license not found ($lic)"
+  fi
+  [[ -f "$RAMP_PY" ]] || die "RAMPS script missing: $RAMP_PY"
+  echo "install ok"
+}
+
+load_fs() {
+  local fs="${FREESURFER_HOME:-$DEFAULT_FS}"
+  [[ -f "$fs/SetUpFreeSurfer.sh" ]] || die "FREESURFER_HOME not set / not found: $fs"
+  export FREESURFER_HOME="$fs"
+  export FS_LICENSE="${FS_LICENSE:-$HOME/.freesurfer/license.txt}"
+  set +u
+  # shellcheck disable=SC1091
+  source "$FREESURFER_HOME/SetUpFreeSurfer.sh"
+  set -u
+  export PATH="$ENV/bin:$PATH"
+}
+
+write_state() {
+  mkdir -p "$(dirname "$STATE")"
+  cat >"$STATE" <<EOF
+ID=$ID
+HEMI=$HEMI
+LOBE=$LOBE
+PRE=$PRE
+POST=$POST
+OUT=$OUT
+PARTITION=$PARTITION
+EOF
+}
+
+cmd_start() {
+  local local_run=0
+  ID="sub-0316"
+  HEMI="R"
+  LOBE="TF"
+  PARTITION="interactive"
+  PRE="$SAMPLE_PRE"
+  POST="$SAMPLE_POST"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pre) PRE="$2"; shift 2 ;;
+      --post) POST="$2"; shift 2 ;;
+      --id) ID="$2"; shift 2 ;;
+      --hemi) HEMI="$2"; shift 2 ;;
+      --lobe) LOBE="$2"; shift 2 ;;
+      --partition) PARTITION="$2"; shift 2 ;;
+      --local) local_run=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      *) die "unknown start option: $1" ;;
+    esac
+  done
+
+  HEMI="${HEMI^^}"
+  LOBE="${LOBE^^}"
+  [[ -x "$ENV/bin/python" ]] || die "run ./Resect install first"
+  [[ -f "$PRE" ]] || die "pre-op T1 not found: $PRE"
+  [[ -f "$POST" ]] || die "post-op T1 not found: $POST"
+  [[ "$HEMI" == "L" || "$HEMI" == "R" ]] || die "--hemi must be L or R"
+  [[ "$LOBE" =~ ^[TFOP]+$ ]] || die "--lobe must be T/F/O/P (e.g. T or TF)"
+
+  OUT="$ROOT/outputs/$ID"
+  mkdir -p "$OUT" "$LOG_DIR"
+  write_state
+
+  if [[ "$local_run" -eq 1 ]]; then
+    echo "running RAMPS locally  id=$ID  hemi=$HEMI  lobe=$LOBE"
+    cmd_worker
+    return
+  fi
+
+  command -v sbatch >/dev/null || die "sbatch not found (use --local on a workstation)"
+  local job
+  job="$(sbatch --parsable \
+    --job-name="resect-${ID}" \
+    --partition="$PARTITION" \
+    --cpus-per-task=16 \
+    --mem=48G \
+    --time=04:00:00 \
+    --output="$LOG_DIR/%x-%j.out" \
+    --error="$LOG_DIR/%x-%j.err" \
+    "$ROOT/Resect" _worker)"
+  echo "$job" >"$JOBID_FILE"
+  echo "submitted job $job  partition=$PARTITION"
+  echo "logs: ./Resect logs"
+}
+
+cmd_worker() {
+  ensure_dirs
+  # shellcheck disable=SC1090
+  [[ -f "$STATE" ]] && source "$STATE"
+  : "${ID:?missing ID}" "${PRE:?}" "${POST:?}" "${OUT:?}" "${HEMI:?}" "${LOBE:?}"
+  mkdir -p "$OUT"
+  export TMPDIR="${SLURM_TMPDIR:-$ROOT/.pip-tmp}"
+  export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:--1}"
+  export TF_CPP_MIN_LOG_LEVEL=2
+  export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+  export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+  export SUBJECTS_DIR="$OUT"
+
+  [[ -x "$ENV/bin/python" ]] || die "run ./Resect install first"
+  load_fs
+
+  echo "host=$(hostname) date=$(date)"
+  echo "id=$ID hemi=$HEMI lobe=$LOBE"
+  echo "pre=$PRE"
+  echo "post=$POST"
+  echo "out=$OUT"
+
+  python "$RAMP_PY" "$PRE" "$POST" "$OUT" "$ID" "$HEMI" "$LOBE"
+  echo "done $(date)"
+  ls -lh "$OUT/RAMPS_Resection_Mask_Output" 2>/dev/null || true
+}
+
+latest_log() {
+  local ext="$1"
+  local f
+  f="$(ls -t "$LOG_DIR"/*."$ext" 2>/dev/null | head -1 || true)"
+  echo "$f"
+}
+
+cmd_logs() {
+  local follow=0
+  [[ "${1:-}" == "-f" || "${1:-}" == "--follow" ]] && follow=1
+  ensure_dirs
+  local out err
+  out="$(latest_log out)"
+  err="$(latest_log err)"
+  if [[ -z "$out" && -z "$err" ]]; then
+    die "no logs yet under $LOG_DIR (run ./Resect start)"
+  fi
+  echo "=== stdout: ${out:-none} ==="
+  if [[ "$follow" -eq 1 && -n "$out" ]]; then
+    tail -n 50 -f "$out"
+  else
+    [[ -n "$out" ]] && tail -n 80 "$out"
+    if [[ -n "$err" && -s "$err" ]]; then
+      echo
+      echo "=== stderr: $err ==="
+      tail -n 40 "$err"
+    fi
+  fi
+}
+
+cmd_status() {
+  ensure_dirs
+  if [[ -f "$STATE" ]]; then
+    echo "last run config:"
+    cat "$STATE"
+    echo
+  fi
+  if [[ -f "$JOBID_FILE" ]]; then
+    local j
+    j="$(cat "$JOBID_FILE")"
+    echo "last job id: $j"
+    if command -v squeue >/dev/null; then
+      squeue -j "$j" 2>/dev/null || echo "(job not in queue)"
+    fi
+  else
+    echo "no SLURM job recorded"
+  fi
+}
+
+main() {
+  local cmd="${1:-}"
+  [[ -n "$cmd" ]] || { usage; exit 1; }
+  shift || true
+  case "$cmd" in
+    install) cmd_install "$@" ;;
+    start)   cmd_start "$@" ;;
+    logs)    cmd_logs "$@" ;;
+    status)  cmd_status "$@" ;;
+    _worker) cmd_worker "$@" ;;
+    -h|--help|help) usage ;;
+    *) usage; die "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"

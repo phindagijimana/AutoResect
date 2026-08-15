@@ -1,0 +1,21 @@
+# Python
+env/
+.venv/
+__pycache__/
+*.pyc
+.pip-tmp/
+
+# Job outputs
+outputs/
+
+# EPISURG MRI cannot be redistributed (UCL data-use agreement).
+data/EPISURG_sample/
+
+# Nested clones
+RAMPS/.git/
+RAMPS/Place_SynthSeg_here/SynthSeg/.git/
+
+# OS / editor
+.DS_Store
+*.swp
+.cursor/

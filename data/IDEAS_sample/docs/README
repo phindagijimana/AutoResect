@@ -1,0 +1,58 @@
+The Imaging Database for Epilepsy And Surgery (IDEAS)
+
+Peter N. Taylor, Yujiang Wang, Callum Simpson, Vytene Janiukstyte, Jonathan Horsley, Karoline Leiberg, Beth Little, Harry Clifford, Sophie Adler, Sjoerd B. Vos, Gavin P Winston, Andrew W McEvoy, Anna Miserocchi, Jane de Tisi, John S Duncan
+
+Magnetic resonance imaging (MRI) is a crucial tool to identify brain abnormalities in a wide range of neurological disorders. In focal epilepsy MRI is used to identify structural cerebral abnormalities. For covert lesions, machine learning and artificial intelligence algorithms may improve lesion detection if abnormalities are not evident on visual inspection. The success of this approach depends on the volume and quality of training data.
+Herein, we release an open-source dataset of preprocessed MRI scans from 442 individuals with drug-refractory focal epilepsy who had neurosurgical resections, and detailed demographic information. The MRI scan data includes the preoperative 3D T1 and where available 3D FLAIR, as well as a manually inspected complete surface reconstruction and volumetric parcellations. Demographic information includes age, sex, age of onset of epilepsy, location of surgery, histopathology of resected specimen, occurrence and frequency of focal seizures with and without impairment of awareness, focal to bilateral tonic-clonic seizures, number of anti-seizure medications (ASMs) at time of surgery, and a total of 1764 patient years of post-surgical follow up. Crucially, we also include resection masks delineated from post-surgical imaging.
+To demonstrate the veracity of our data, we successfully replicated previous studies showing long-term outcomes of seizure freedom in the range of around 50%. Our imaging data replicates findings of group level atrophy in patients compared to controls. Resection locations in the cohort were predominantly in the temporal and frontal lobes.
+We envisage our dataset, shared openly with the community, will catalyse the development and application of computational methods in clinical neurology.
+
+https://arxiv.org/abs/2406.06731
+
+This release on OpenNeuro includes only raw T1w and FLAR scans. Fully processed data, including resection masks and other demographic information can be found at the following locations: https://www.cnnp-lab.com/ideas-data
+
+
+- Bids https://figshare.com/s/07fca72410094bc49506 
+Raw T1w and FLAIR scans organised in BIDS format. Nifti and json descriptors included
+
+- Masks
+https://figshare.com/s/31ab43d1829b12ac13e8 
+Resection masks for IDEAS cohort in native, and freesurfer orig.mgz space
+
+- Freesurfer_brain
+https://figshare.com/s/39b61a1df5fa8443e3c4 
+skullstripped brain from freesurfer in nifti format
+
+- Freesurfer_orig 
+https://figshare.com/s/f13391a4161b807ce6b0 
+freesurfer orig.mgz converted to nifti format
+
+- Freesurfer_zip
+https://figshare.com/s/b13b8bb41390d3f7a088 
+freesurfer surface and volumetric reconstructions
+
+- Tables_stats_freesurfer
+https://figshare.com/s/010142dd51e37ba4e4e2 
+Freesurfer thickness, volume, and surface areas for the Desikan-Kiliany parcellation.
+
+- Tables_metadata
+https://figshare.com/s/bab70268afeb1071202b 
+clinical and demographic metadata
+
+- Table_resected
+https://figshare.com/s/097ba0e254e36f0eee52 
+table indicating the percentage of each brain region in the Desikan-Kiliany atlas subsequently resected by surgery.
+
+- Tables_zscores
+https://figshare.com/s/8c086fc295a75f85e628 
+Freesurfer thickness, volume, and surface areas for the Desikan-Kiliany parcellation, z-scored against normative controls post-combat.
+
+- Tables_group_effect
+https://figshare.com/s/323db205354788c4d1f0 
+Group effect size differences to controls
+
+
+
+
+
+

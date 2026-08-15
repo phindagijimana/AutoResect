@@ -15,6 +15,9 @@ data/EPISURG_sample/
 RAMPS/.git/
 RAMPS/Place_SynthSeg_here/SynthSeg/.git/
 
+# FreeSurfer model weights (symlinked locally, not redistributable)
+RAMPS/Place_SynthSeg_here/SynthSeg/models/
+
 # OS / editor
 .DS_Store
 *.swp

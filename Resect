@@ -2,7 +2,13 @@
 # Resect — CLI for the RAMPS preoperative resection-mask pipeline.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${RESECT_ROOT:-}"
+if [[ -z "$ROOT" && -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/Resect" ]]; then
+  ROOT="$SLURM_SUBMIT_DIR"
+fi
+if [[ -z "$ROOT" ]]; then
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 ENV="$ROOT/env"
 LOG_DIR="$ROOT/outputs/logs"
 STATE="$ROOT/outputs/.last_run"
@@ -97,11 +103,14 @@ load_fs() {
   [[ -f "$fs/SetUpFreeSurfer.sh" ]] || die "FREESURFER_HOME not set / not found: $fs"
   export FREESURFER_HOME="$fs"
   export FS_LICENSE="${FS_LICENSE:-$HOME/.freesurfer/license.txt}"
-  set +u
+  # FreeSurfer's setup script uses unset vars and non-zero tests; do not abort.
+  set +euo pipefail
   # shellcheck disable=SC1091
   source "$FREESURFER_HOME/SetUpFreeSurfer.sh"
-  set -u
+  set -euo pipefail
   export PATH="$ENV/bin:$PATH"
+  command -v mri_synthstrip >/dev/null || die "mri_synthstrip not on PATH after FreeSurfer setup"
+  command -v mri_synthseg >/dev/null || die "mri_synthseg not on PATH after FreeSurfer setup"
 }
 
 write_state() {
@@ -142,7 +151,6 @@ cmd_start() {
 
   HEMI="${HEMI^^}"
   LOBE="${LOBE^^}"
-  [[ -x "$ENV/bin/python" ]] || die "run ./Resect install first"
   [[ -f "$PRE" ]] || die "pre-op T1 not found: $PRE"
   [[ -f "$POST" ]] || die "post-op T1 not found: $POST"
   [[ "$HEMI" == "L" || "$HEMI" == "R" ]] || die "--hemi must be L or R"
@@ -154,7 +162,7 @@ cmd_start() {
 
   if [[ "$local_run" -eq 1 ]]; then
     echo "running RAMPS locally  id=$ID  hemi=$HEMI  lobe=$LOBE"
-    cmd_worker
+    cmd_job
     return
   fi
 
@@ -163,15 +171,22 @@ cmd_start() {
   job="$(sbatch --parsable \
     --job-name="resect-${ID}" \
     --partition="$PARTITION" \
+    --chdir="$ROOT" \
+    --export=ALL,RESECT_ROOT="$ROOT" \
     --cpus-per-task=16 \
     --mem=48G \
     --time=04:00:00 \
     --output="$LOG_DIR/%x-%j.out" \
     --error="$LOG_DIR/%x-%j.err" \
-    "$ROOT/Resect" _worker)"
+    "$ROOT/Resect" _job)"
   echo "$job" >"$JOBID_FILE"
   echo "submitted job $job  partition=$PARTITION"
   echo "logs: ./Resect logs"
+}
+
+cmd_job() {
+  cmd_install
+  cmd_worker
 }
 
 cmd_worker() {
@@ -260,6 +275,7 @@ main() {
     logs)    cmd_logs "$@" ;;
     status)  cmd_status "$@" ;;
     _worker) cmd_worker "$@" ;;
+    _job)    cmd_job "$@" ;;
     -h|--help|help) usage ;;
     *) usage; die "unknown command: $cmd" ;;
   esac
